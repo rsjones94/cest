@@ -7,6 +7,7 @@ import datetime
 import operator
 import sys
 import copy
+import warnings
 
 import scipy
 import nibabel as nib
@@ -27,9 +28,9 @@ from matplotlib import cm
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
 def segment_muscle_and_fat(water_image_data, fat_image_data,
-                           min_shape_area=100, min_edge_length=20, n_erode_muscle=1,
-                           n_fat_preserve = 2, n_erode_fat = 1, n_edge_dilate=7,
-                           prop_thresh=0.2, solidity_thresh=0.1):
+                           min_shape_area=100, min_edge_length=20, n_erode_muscle=0,
+                           n_fat_preserve = 4, n_erode_fat = 0, n_edge_dilate=5,
+                           prop_thresh=0.5, solidity_thresh=0.1):
     """
     
 
@@ -167,8 +168,9 @@ def segment_muscle_and_fat(water_image_data, fat_image_data,
             sli[labeled != min_label] = 0
             for j in range(n_erode_muscle):
                 sli = morphology.binary_dilation(sli)
-                
-            sli = morphology.binary_closing(sli)
+            
+            if n_erode_muscle > 0:
+                sli = morphology.binary_closing(sli)
             
             water_mask[:,:,i] = sli
         except (IndexError, ValueError):
@@ -262,44 +264,6 @@ def segment_muscle_and_fat(water_image_data, fat_image_data,
     
     fat_mask[edge_mask >= 1] = 0
     
-    '''
-    # then dilate each label in the edge mask three times in each slice and use the overlap to guess where the arm-torso interface is and propagate that
-    n_dil = 10
-    intersection_mask = np.zeros_like(edge_mask)
-    for i in range(0, edge_mask.shape[2]):
-        sli = edge_mask[:,:,i].copy()
-        intersection_counter = np.zeros_like(sli)
-        ra = list(np.unique(sli))
-        removers = [-1,0]
-        for m in removers:
-            try:
-                ra.pop(ra.index(m))
-            except ValueError:
-                continue
-        for j in ra: # don't care about -1, that represents filtered edges
-            binaried = sli == j
-            for m in range(0,n_dil):
-                binaried = morphology.binary_dilation(binaried)
-            intersection_counter = intersection_counter + binaried
-            
-        intersection_bin = intersection_counter.copy()
-        intersection_bin[intersection_bin < 2] = 0 # basically we summed up all the dilated shapes. >1 means there was an intersection
-        intersection_bin[intersection_bin >= 2] = 1 # basically we summed up all the dilated shapes. >1 means there was an intersection
-        
-        intersection_bin[fat_mask[:,:,i] == 1] = 0 # blot out the fat mask on that slice though
-        
-        intersection_mask[:,:,i] = intersection_bin
-        
-        #plt.figure()
-        #plt.imshow(intersection_bin)
-        
-    flat_intersect = np.mean(intersection_mask, axis=2)
-    
-    prop_mask = flat_intersect.copy()
-    prop_mask[prop_mask < 0.25] = 0
-    prop_mask[prop_mask >= 0.25] = 1
-    '''
-    
     
     # find the arm fat
     #n_fat_preserve = 2 # number of dilations around arm muscle to preserve fat
@@ -353,7 +317,9 @@ def segment_muscle_and_fat(water_image_data, fat_image_data,
                 
             
             sli[arm_slice == 1] = 0
-            sli = morphology.binary_closing(sli)
+            
+            if n_erode_fat > 0:
+                sli = morphology.binary_closing(sli)
             
             fat_mask[:,:,i] = sli
         except (IndexError, ValueError):
@@ -512,3 +478,63 @@ def segment_muscle_and_fat(water_image_data, fat_image_data,
     
     
     return water_mask, fat_mask, combined_mask, intermediates
+
+
+
+def restore_coordspace_from_source(nif, source, out_nif=None, bin_folder=None, path_to_dcm2nii='/Users/skyjones/Desktop/ASE_standalone_v1/slw_resources/dcm2nii64'):
+    """
+    Takes a nifti that lost its affine and heading and associates the affine/heading from a source image
+    
+    
+    """
+    
+    
+    in_nif = nib.load(nif)
+    
+    try:
+        in_source = nib.load(source)
+    except nib.filebasedimages.ImageFileError: # when the source is an enhanced dicom
+        warnings.warn('DCM source image. Attempting conversion to NiFTI for coordinate space extraction')
+        if bin_folder is not None:
+            working_folder = bin_folder
+        else:
+            working_folder = os.path.join(os.path.dirname(nif), 'coordinate_working')
+        
+        os.mkdir(working_folder)
+        conversion_command = f'{path_to_dcm2nii} -a n -i n -d n -p n -e n -f y -v n -o {working_folder} {source}'
+        os.system(conversion_command)
+        
+        converted_file = os.path.join(working_folder, os.path.basename(source.replace('DCM', 'nii.gz')))
+        in_source = nib.load(converted_file)
+        
+        if bin_folder is None:
+            shutil.rmtree(working_folder)
+        
+    
+    restored_affine = in_source.affine
+    restored_header = in_source.header
+    
+    restored_data = np.flip(in_nif.get_fdata(), axis=1)
+    
+    out_image = nib.Nifti1Image(restored_data, restored_affine, restored_header)
+    
+    if out_nif is not None:
+        out_name = out_nif
+    else:
+        out_name = nif
+    
+    nib.save(out_image, out_name)
+    
+
+def dcm_to_nii(in_dicom, path_to_dcm2nii='/Users/skyjones/Desktop/ASE_standalone_v1/slw_resources/dcm2nii64'):
+    """
+    does not work correctly with 4d files
+    """
+    
+    conversion_command = f'{path_to_dcm2nii} -a n -i n -d n -p n -e n -f y -v n {in_dicom}'
+    os.system(conversion_command)
+    
+    
+    
+    
+    

@@ -1,0 +1,1 @@
+import numpy as np               def reconvert_nparray_from_string(a, strip_chars=['[', ']', '\n']):    b = a    for c in strip_chars:        b = b.replace(c, '')            b = " ".join(b.split())        spl = b.split(' ')    as_floats = [float(i) for i in spl]    return np.array(as_floats)
