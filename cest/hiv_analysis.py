@@ -7,6 +7,7 @@ import datetime
 import operator
 import sys
 import copy
+import glob
 
 import nibabel as nib
 import matplotlib as mpl
@@ -26,27 +27,36 @@ from matplotlib import cm
 from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 import scipy
 
+import analyze as az
+import preprocess as pp
 
 mpl.rcParams.update({'errorbar.capsize': 2})
 
 # input
 master_folder = '/Users/skyjones/Desktop/hiv_processing/data/working/'
-cest_spreadsheet = '/Users/skyjones/Desktop/hiv_processing/pos_workbook.xlsx'
+bulk_folder = '/Users/skyjones/Desktop/hiv_processing/data/bulk/'
+cest_spreadsheet = '/Users/skyjones/Desktop/hiv_processing/workbook.xlsx'
 
 #output
 data_out = '/Users/skyjones/Desktop/hiv_processing/data/working/results.csv'
 figure_folder = '/Users/skyjones/Desktop/hiv_processing/data/working/figures/'
 
 do_prep = True
-do_figs = True
+coord_restore = True
+
+do_figs = False
 
 
 
+master_node_df_outname = os.path.join(master_folder, f'node_data.xlsx')
+byperson_df_outname = os.path.join(master_folder, f'node_data_byperson.xlsx')
+delta_df_outname = os.path.join(master_folder, f'node_data_delta.xlsx')
 ##########
 def _lorentzian_mono(x, amp1, cen1, wid1, offset1):
     return (amp1*wid1**2/((x-cen1)**2+wid1**2)) + offset1
 
-weight_types = ['fat', 'water']
+#weight_types = ['fat', 'water']
+weight_types = ['water']
 
 if do_prep:
     cest_df = pd.read_excel(cest_spreadsheet)
@@ -58,6 +68,8 @@ if do_prep:
     for sub in subs:
         
         master_node_df = pd.DataFrame()
+        #master_node_df_flatweighted = pd.DataFrame()
+        #master_node_df_volweighted = pd.DataFrame()
         
         aim_folder = sub[:-1].split('/')[-1]
 
@@ -77,17 +89,57 @@ if do_prep:
             num_id = '_'.join(splitter[1:-2])
             arm = splitter[-1]
             
-            scan_id = '_'.join(splitter[:2])
+            #scan_id = '_'.join(splitter[:2])
+            scan_id = cest_id
+            
+            
             
             # get the rows in the cest_df that correspond to this mri_id
             
             #the_rows = cest_df[cest_df['mri_id'] == num_id]
             the_rows = cest_df[cest_df['scan_id'] == scan_id]
+            the_row = the_rows.iloc[0]
+            
+            is_control = the_row['Control']
+            race = the_row['Race']
+            gender = the_row['Gender']
+            ethnicity = the_row['Ethnicity']
+            is_followup = the_row['followup']
             
             #if num_id != '146291':
             #    continue
             
             print(f'{aim_folder}: {num_id}, {arm}')
+            
+            if coord_restore:
+                overwrite_coords = False
+                
+                txtmarker = os.path.join(fol, 'coords_restored.txt')
+                
+                if not os.path.exists(txtmarker) or overwrite_coords:
+                    # step 1: make sure we restore the coordinate info
+                    subims = glob.glob(os.path.join(fol, '*.nii.gz'))
+                    
+                    
+                    sourcer = os.path.join(sub, 'raw', f'{os.path.basename(os.path.normpath(fol))}.DCM')
+                    pp.dcm_to_nii(sourcer)
+                    
+                    convd = sourcer.replace('DCM', 'nii.gz')
+                    
+                    if not os.path.exists(convd):
+                        convd = convd.replace('.nii.gz', '_1.nii.gz')
+                    
+                    
+                    for sim in subims:
+                        pp.restore_coordspace_from_source(nif=sim,
+                                                          source=convd) # source = sourcer
+                        with open(txtmarker, 'w') as f:
+                            f.write('')
+                            
+                    os.remove(convd)
+                            
+                else:
+                    pass
                         
             
             
@@ -97,7 +149,16 @@ if do_prep:
             fat_image = os.path.join(fol, f'{cest_id}_cestdixon_{arm}_C4_.nii.gz')
             t2star_image = os.path.join(fol, f'{cest_id}_cestdixon_{arm}_C5_.nii.gz')
             #b0_image = os.path.join(fol, f'{cest_id}_cestdixon_{arm}_C6_.nii.gz') # this is actually just the water-weighted b0
-            node_image = os.path.join(fol, f'{cest_id}_cestdixon_{arm}_nodes_.nii.gz') # THIS PATH WILL NEED TO BE UPDATED
+            
+            node_image_globber = os.path.join(bulk_folder, aim_folder, cest_id, f'*mask*{arm}.nii.gz')
+            
+            node_image_candidates = glob.glob(node_image_globber)
+            try:
+                node_image = node_image_candidates[0]
+            except IndexError:
+                node_image = None
+                print(f'\t\tNO NODE IMAGE')
+                continue
             
             analysis_folder = os.path.join(fol, 'analysis')
             if os.path.exists(analysis_folder):
@@ -111,22 +172,21 @@ if do_prep:
             
             fat_image_loaded = nib.load(fat_image)
             fat_image_data = fat_image_loaded.get_fdata()
-            fat_image_data = np.mean(fat_image_data, 3) # time average
+            fat_image_data = np.mean(fat_image_data, 3) # zspec average
             fat_image_voxelvol = np.product(fat_image_loaded.header['pixdim'][1:4])
             
             water_image_loaded = nib.load(water_image)
             water_image_data = water_image_loaded.get_fdata()
-            water_image_data = np.mean(water_image_data, 3) # time average
+            water_image_data = np.mean(water_image_data, 3) # zspec average
             water_image_voxelvol = np.product(fat_image_loaded.header['pixdim'][1:4])
             
-            node_image_loaded = nib.load(water_image)
-            node_image_data = water_image_loaded.get_fdata()
-            node_image_voxelvol = np.product(node_image_data.header['pixdim'][1:4])
+            node_image_loaded = nib.load(node_image)
+            node_image_data = node_image_loaded.get_fdata()
+            node_image_voxelvol = np.product(node_image_loaded.header['pixdim'][1:4])
             
+            node_image_data = node_image_data.astype(int)
+            node_image_data = morphology.label(node_image_data) # comment this out if the image is prelabeled. but this line is needed if the mask is simple binary
             
-                                
-            fig, axs = plt.subplots(nrows=5, ncols=2, figsize=(8, 12))
-            plt.close()
             
             for weight_type in weight_types:
                 print(f'\tWeighting: {weight_type}')
@@ -168,25 +228,56 @@ if do_prep:
 
                 node_nums = np.unique(node_image_data)
                 
-                node_df = pd.DataFrame()
                 '''
                 what we want to do is save a df of zspec data for each node -- one df per participant
                 then afterwards we will collate everything into a master csv with aggregate stats for each participant
                 '''
+                #individual_signals = []
+                i#ndividual_apts = []
+                #individual_noes = []
+                #individual_vols = []
+                
                 for node_num in node_nums:
                     if node_num == 0:
                         continue
-                    node_mask = node_image_data[node_image_data==node_num]
+                    
+                    print(f'\tNode num: {node_num}')
+                    node_mask = node_image_data == node_num
                     
                     node_n_voxels = node_mask.sum()
                     node_vol = node_n_voxels * node_image_voxelvol
                     
                     node_ser = pd.Series()
+                    node_ser['cest_id'] = cest_id
+                    node_ser['control'] = is_control
+                    node_ser['followup'] = is_followup
+                    node_ser['race'] = race
+                    node_ser['ethnicity'] = ethnicity
+                    node_ser['gender'] = gender
                     node_ser['num_id'] = num_id
                     node_ser['arm'] = arm
                     node_ser['weight_type'] = weight_type
                     node_ser['node_num'] = node_num
                     node_ser['node_vol'] = node_vol
+                    node_ser['node_voxels'] = node_n_voxels
+                    
+                    #individual_vols.append(node_vol)
+                    
+                    # bulk signal
+                    
+                    sigs = [apt_image_data_norm, noe_image_data_norm]
+                    sig_names = ['apt', 'noe']
+            
+                    for sig, sig_name in zip(sigs, sig_names):
+                        sig_copy = sig.copy()
+                        sig_copy[node_mask != 1] = np.nan # mask it
+                        sig_copy[sig_copy == 0] = np.nan # remove zero signal wierdery
+                        
+                        the_mean = np.nanmean(sig_copy)
+                        the_std = np.nanstd(sig_copy)
+                        
+                        node_ser[f'mean_{sig_name}'] = the_mean
+                        node_ser[f'std_{sig_name}'] = the_std
                     
                     # time to parse the zspec data
                     
@@ -213,8 +304,11 @@ if do_prep:
                     shifts_uncor = np.arange(start_shift_uncor, end_shift_uncor - shift_step_uncor, shift_step_uncor)
                     shifts_uncor = [round(i,1) for i in shifts_uncor] # round to nearest tenth. thx floating point imprecision
                     
-                    node_ser[f'chemical_shifts_ppm'] = str(shifts)
-                    node_ser.at[f'chemical_shifts_uncor_ppm'] = str(shifts_uncor)
+                    node_ser[f'chemical_shifts_ppm'] = np.array(shifts)
+                    node_ser.at[f'chemical_shifts_uncor_ppm'] = np.array(shifts_uncor)
+                    
+                    #individual_noes.append(node_ser['mean_noe'])
+                    #individual_apts.append(node_ser['mean_apt'])
                         
                     # calculate the zspec
                     means = []
@@ -245,6 +339,9 @@ if do_prep:
                         means_norm.append(the_mean_norm)
                         stds_norm.append(the_std_norm)
                         
+                    
+                    #individual_signals.append(means_norm)
+                    
                     # now get the uncorrected means
                     means_uncor = []
                     stds_uncor = []
@@ -301,797 +398,332 @@ if do_prep:
                         offset_guess = 1
                     
                     try:
-                        popt_lor, pcov_lor = scipy.optimize.curve_fit(_lorentzian_mono, shifts, means_norm, [amp_guess, center_guess, width_guess, offset_guess])
+                        popt_lor, pcov_lor = scipy.optimize.curve_fit(_lorentzian_mono, shifts, means_norm, [amp_guess, center_guess, width_guess, offset_guess], maxfev=int(1e4))
                         perr_lor = np.sqrt(np.diag(pcov_lor))
                         
                         opt_sigs = _lorentzian_mono(np.array(shifts), popt_lor[0], popt_lor[1], popt_lor[2], popt_lor[3])
 
-                        node_ser[f'lorentzian_sigs'] = str(opt_sigs)
-                        node_ser[f'lorentzian_amp'] = str(popt_lor[0])
-                        node_ser[f'lorentzian_center'] = str(popt_lor[1])
-                        node_ser[f'lorentzian_width'] = str(popt_lor[2])
-                        node_ser[f'lorentzian_offset'] = str(popt_lor[3])
+                        node_ser[f'lorentzian_sigs'] = np.array(opt_sigs)
+                        node_ser[f'lorentzian_amp'] = popt_lor[0]
+                        node_ser[f'lorentzian_center'] = popt_lor[1]
+                        node_ser[f'lorentzian_width'] = popt_lor[2]
+                        node_ser[f'lorentzian_offset'] = popt_lor[3]
                     except ValueError:
                         pass
                         
                     
     
                     
-                    node_ser[f'signals_mean'] = str(means)
-                    node_ser[f'signals_std'] = str(stds)
-                    node_ser[f'signals_asym'] = str(asym)
-                    node_ser[ f'signals_eqdif'] = str(dif)
-                    node_ser[ f'signals_meannorm'] = str(means_norm)
-                    node_ser[f'signals_stdnorm'] = str(stds_norm)
-                    node_ser[ f'signals_mean_uncor'] = str(means_uncor)
-                    node_ser[f'signals_std_uncor'] = str(stds_uncor)
-                    
-                    master_node_df.append(node_ser)
-                    
-        master_node_df_outname = os.path.join(fol, f'node_data.csv')
-        master_node_df_outname.to_csv(master_node_df_outname)
-        
+                    node_ser[f'signals_mean'] = np.array(means)
+                    node_ser[f'signals_std'] = np.array(stds)
+                    node_ser[f'signals_asym'] = np.array(asym)
+                    node_ser[ f'signals_eqdif'] = np.array(dif)
+                    node_ser[ f'signals_meannorm'] = np.array(means_norm)
+                    node_ser[f'signals_stdnorm'] = np.array(stds_norm)
+                    node_ser[ f'signals_mean_uncor'] = np.array(means_uncor)
+                    node_ser[f'signals_std_uncor'] = np.array(stds_uncor)
 
-###### figs
-if do_figs:
-    print('figuring')
-    cest_df = pd.read_csv(data_out)
-    
-    aff_col = 'coral'
-    cont_col = 'dodgerblue'
-    
-    roi_names = ['muscle', 'fat', 'whole']
-    sig_names = ['apt', 'noe', 'fat_frac']
-    aims = cest_df['aim'].unique()
-    for aim in aims:
-        
-        if aim == 1:
-            continue
-        
-        for weight_type in weight_types:
+                        
+                    if np.isnan(node_ser['mean_noe']):
+                        print('Node has no data in ROI')
+                    else:
+                        master_node_df = master_node_df.append(node_ser, ignore_index=True)
+                    
+                
+                '''
+                individual_signals = np.array(individual_signals)
+                individual_apts = np.array(individual_apts)
+                individual_noes = np.array(individual_noes)
+                individual_vols = np.array(individual_vols)
+                
+                weightings = [None, individual_vols]
+                
+                study_row_flatweighted = pd.Series()
+                study_row_volweighted = pd.Series()
+                
+                sers = [study_row_flatweighted, study_row_volweighted]
+                
+                for the_ser, the_weighting in zip(sers, weightings):
+                    
+                    the_ser['cest_id'] = cest_id
+                    the_ser['control'] = is_control
+                    the_ser['race'] = race
+                    the_ser['ethnicity'] = ethnicity
+                    the_ser['gender'] = gender
+                    the_ser['num_id'] = num_id
+                    the_ser['arm'] = arm
+                    the_ser['weight_type'] = weight_type
+                    
+                    avg_signals = np.average(individual_signals, axis=0, weights=the_weighting)
+                    avg_apt = np.average(individual_apts, weights=the_weighting)
+                    avg_noe = np.average(individual_noes, weights=the_weighting)
+                    total_vol = individual_vols.sum()
+                    n_nodes = len(individual_vols)
+                    
+                    
+                    the_ser['signals_meannorm'] = str(avg_signals)
+                    the_ser['chemical_shifts_ppm'] = str(shifts)
+                    the_ser['mean_noe'] = avg_noe
+                    the_ser['mean_apt'] = avg_apt
+                    
+                    the_ser['total_node_vol'] = total_vol
+                    the_ser['n_nodes'] = n_nodes
+                    
+                    try:
+                        popt_lor, pcov_lor = scipy.optimize.curve_fit(_lorentzian_mono, shifts, avg_signals, [amp_guess, center_guess, width_guess, offset_guess], maxfev=int(1e4))
+                        perr_lor = np.sqrt(np.diag(pcov_lor))
+                        
+                        opt_sigs = _lorentzian_mono(np.array(shifts), popt_lor[0], popt_lor[1], popt_lor[2], popt_lor[3])
 
-            target_aim_folder = os.path.join(figure_folder, f'aim{aim}')
-            sub_df = cest_df[cest_df['aim'] == aim]
-            
-            study_ids = sub_df['study_id'].unique()
-            
-            #zspec comparisons
-            zspec_comp_fig_name = os.path.join(target_aim_folder, f'zspec_comp_aim{aim}_{weight_type}weighted.png')
-            figure, axs = plt.subplots(nrows=1, ncols=2, figsize=(16,8))
-            
-            fat_cont_all = np.array([np.array([float(j) for j in i[1:-1].split(',')]) for i in sub_df[f'fat_cont_signals_meannorm_{weight_type}weighted'].dropna()])
-            fat_cont_signals = np.nanmean(fat_cont_all, 0)
-            fat_aff_all = np.array([np.array([float(j) for j in i[1:-1].split(',')]) for i in sub_df[f'fat_aff_signals_meannorm_{weight_type}weighted'].dropna()])
-            fat_aff_signals = np.nanmean(fat_aff_all, 0)
-            
-            muscle_cont_all = np.array([np.array([float(j) for j in i[1:-1].split(',')]) for i in sub_df[f'muscle_cont_signals_meannorm_{weight_type}weighted'].dropna()])
-            muscle_cont_signals = np.nanmean(muscle_cont_all, 0)
-            muscle_aff_all = np.array([np.array([float(j) for j in i[1:-1].split(',')]) for i in sub_df[f'muscle_aff_signals_meannorm_{weight_type}weighted'].dropna()])
-            muscle_aff_signals = np.nanmean(muscle_aff_all, 0)
-            
-    
-            
-            for i, row in sub_df.iterrows():
-                shifts = row['chemical_shifts_ppm']
+                        the_ser[f'lorentzian_sigs'] = str(opt_sigs)
+                        the_ser[f'lorentzian_amp'] = str(popt_lor[0])
+                        the_ser[f'lorentzian_center'] = str(popt_lor[1])
+                        the_ser[f'lorentzian_width'] = str(popt_lor[2])
+                        the_ser[f'lorentzian_offset'] = str(popt_lor[3])
+                    except ValueError:
+                        pass
+
                 
+                master_node_df_flatweighted = master_node_df_flatweighted.append(study_row_flatweighted, ignore_index=True)
+                master_node_df_volweighted = master_node_df_volweighted.append(study_row_volweighted, ignore_index=True)
+                '''
+
+
+        
+    # now lets get unweighted averages of signals for each pt
+    unique_ids = master_node_df['cest_id'].unique()
+    arm_types = ['aff', 'cont']
+    incl_cols = [i for i in master_node_df.columns if 'lorentz' not in i and 'node' not in i and 'sig' not in i and 'std' not in i]
     
+    node_df_byperson = pd.DataFrame()
+    for wt in weight_types:
+        pare_df = master_node_df[master_node_df['weight_type'] == wt]
+        for at in arm_types:
+            sub_pare_df = pare_df[pare_df['arm'] == at]
+            for the_id in unique_ids:
                 
+                sub_df = sub_pare_df[sub_pare_df['cest_id'] == the_id]
+                if len(sub_df) == 0:
+                    continue
+                
+                r1 = sub_df.iloc[0]
+                
+                ser = pd.Series()
+                
+                for co in incl_cols:
+                    ser[co] = r1[co]
+                ser['signals_meannorm'] = np.average(np.array(sub_df['signals_meannorm']), axis=0)
+                ser['mean_apt'] = np.average(np.array(sub_df['mean_apt']))
+                ser['mean_noe'] = np.average(np.array(sub_df['mean_noe']))
+                ser['n_nodes'] = len(sub_df)
+                ser['vol_nodes'] = np.sum(sub_df['node_vol'])
+                ser['n_node_voxels'] = np.sum(sub_df['node_voxels'])
+                
+                # optimiziation initial params for lorentzian
+                if wt == 'water':
+                    amp_guess = -1
+                    center_guess = 0
+                    width_guess = 2
+                    offset_guess = 1
+                elif wt == 'fat':
+                    amp_guess = -0.5
+                    center_guess = -3
+                    width_guess = 2
+                    offset_guess = 1
+                    
                 try:
-                    shifts = [float(i) for i in shifts[1:-1].split(', ')]
-                except TypeError:
+                    popt_lor, pcov_lor = scipy.optimize.curve_fit(_lorentzian_mono, ser['chemical_shifts_ppm'], ser['signals_meannorm'],
+                                                                  [amp_guess, center_guess, width_guess, offset_guess], maxfev=int(1e4))
+                    perr_lor = np.sqrt(np.diag(pcov_lor))
+                    
+                    opt_sigs = _lorentzian_mono(np.array(shifts), popt_lor[0], popt_lor[1], popt_lor[2], popt_lor[3])
+
+                    ser[f'lorentzian_sigs'] = np.array(opt_sigs)
+                    ser[f'lorentzian_amp'] = popt_lor[0]
+                    ser[f'lorentzian_center'] = popt_lor[1]
+                    ser[f'lorentzian_width'] = popt_lor[2]
+                    ser[f'lorentzian_offset'] = popt_lor[3]
+                except ValueError:
+                    pass
+                node_df_byperson = node_df_byperson.append(ser, ignore_index=True)
+
+    # now let's calculate the pre-post difference
+    node_df_delta = pd.DataFrame()
+    incl_cols = [i for i in master_node_df.columns if 'lorentz' not in i and 'node' not in i
+                 and 'sig' not in i and 'std' not in i and 'cest_id' not in i and 'followup' not in i]
+    for wt in weight_types:
+        pare_df = node_df_byperson[node_df_byperson['weight_type'] == wt]
+        for at in arm_types:
+            sub_pare_df = pare_df[pare_df['arm'] == at]
+            for the_id in unique_ids:
+                ser = pd.Series()
+                sub_df = sub_pare_df[sub_pare_df['cest_id'] == the_id]
+                if len(sub_df) == 0:
                     continue
                 
                 
-                arms = ['aff', 'cont']
-                acols = ['red', 'blue']
-                locs = ['muscle', 'fat']
+                r1 = sub_df.iloc[0] # post
                 
-                lens_outer = [[len(muscle_aff_all), len(muscle_cont_all)],[len(fat_aff_all), len(fat_cont_all)]]
+                partner_name = r1['followup']
+                if type(partner_name) == float:
+                    continue
                 
-                for ax, loc, lens in zip(axs, locs, lens_outer):
-                    for arm, acol, the_len in zip(arms, acols, lens):
-                        means = row[f'{loc}_{arm}_signals_meannorm_{weight_type}weighted']
-                        stds = row[f'{loc}_{arm}_signals_stdnorm_{weight_type}weighted']
-                        
-                        try:
-                            means = [float(i) for i in means[1:-1].split(', ')]
-                            stds = [float(i) for i in stds[1:-1].split(', ')]
-                        except TypeError:
-                            #print('Type error....')
-                            #ebah = means
-                            continue
-                            
-                        
-                        ax.fill_between(shifts, np.array(means)+np.array(stds), np.array(means)-np.array(stds), color=acol, alpha=0.3/the_len, lw=0)
-                        #ax.plot(shifts, means, color=acol, alpha=0.2)
-                        
-                    ax.set_title(f'Comparative Z-spectra: {loc} (aim {aim}), {weight_type} weighted')
-                    ax.set_xlabel('Chemical shift (ppm)')
-                    ax.set_ylabel('Normalized signal intensity (a.u.)')
+                partner_df = sub_pare_df[sub_pare_df['cest_id'] == partner_name]
+                r2 = partner_df.iloc[0] # pre
+                
+                for co in incl_cols:
+                    ser[co] = r1[co]
                     
-                    ax.set_ylim(-1,2)
-                    
+                rows = [r2, r1]
+                row_temporals = ['initial', 'followup']
+                
+                for coln in sub_df.columns:
+                    if coln in incl_cols:
+                        continue
+                    for ro, rot in zip(rows, row_temporals):
+                        ser[f'{rot}_{coln}'] = ro[coln]
+                
+                ser['signals_meannorm_delta'] = r1['signals_meannorm'] - r2['signals_meannorm']
+                ser['mean_noe_delta'] = r1['mean_noe'] - r2['mean_noe']
+                ser['mean_apt_delta'] = r1['mean_apt'] - r2['mean_apt']
+                ser['mean_lorwidth_delta'] = r1['lorentzian_width'] - r2['lorentzian_width']
+                
+                node_df_delta = node_df_delta.append(ser, ignore_index=True)
+                
+                        
+    master_node_df.to_excel(master_node_df_outname)
     
-            
-            alpher = 0.6
-            axs[0].plot(shifts, muscle_aff_signals, color=acols[0], label=f'Affected (n={len(muscle_aff_all)})', alpha=alpher)
-            axs[0].plot(shifts, muscle_cont_signals, color=acols[1], label=f'Contralateral (n={len(muscle_cont_all)})', alpha=alpher)
-            
-            axs[1].plot(shifts, fat_aff_signals, color=acols[0], label=f'Affected (n={len(fat_aff_all)})', alpha=alpher)      
-            axs[1].plot(shifts, fat_cont_signals, color=acols[1], label=f'Contralateral (n={len(fat_cont_all)})', alpha=alpher)
-            
-            axs[0].legend()
-            axs[1].legend()
-                    
-            plt.tight_layout()
-            plt.savefig(zspec_comp_fig_name, dpi=200)
-            
-            plt.close()
-            
-        if aim == 3:
-            
-                    
-            tissue_types = ['muscle', 'fat']
-            sides = ['aff', 'cont']
-            sig_types = ['apt', 'noe']
-            
-            
-            ## treatment response stats
-            
-            id_lens = [len(sub_df[sub_df['study_id']==i]) for i in study_ids] # number of treatments. if 4, then we know they have completed pre and post intervention scans for both interventions
-            
-            #full_ids = [i for i, n in zip(study_ids, id_lens) if n >= 4]
+    node_df_byperson.to_excel(byperson_df_outname)
     
+    node_df_delta.to_excel(delta_df_outname)
+                    
+
     
-            response_df = pd.DataFrame()
-            response_df['study_id'] = study_ids
-            
-            
-            for tis in tissue_types:
-                for sig in sig_types:
-                    for weight_type in weight_types:
-                        cdt_pre_cont_list, cdt_post_cont_list, dual_pre_cont_list, dual_post_cont_list = [], [], [], []
-                        cdt_pre_aff_list, cdt_post_aff_list, dual_pre_aff_list, dual_post_aff_list = [], [], [], []
-                        
-                        cdt_pre_names, cdt_post_names, dual_pre_names, dual_post_names = [], [], [], []
-                        
-                        
-                        for the_id in study_ids: # use full_ids for 'completed' pts, study_ids for all
-                            id_df = sub_df[sub_df['study_id']==the_id]
-                            
-                            cdt_rows = id_df[id_df['treatment_type']=='cdt_alone']
-                            dual_rows = id_df[id_df['treatment_type']=='cdt_and_lt']
-                            
-                            try:
-                                cdt_pre_aff = cdt_rows[cdt_rows['treatment_status']=='pre'][f'aff_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                cdt_pre_aff = np.nan
-                            try:
-                                cdt_pre_cont = cdt_rows[cdt_rows['treatment_status']=='pre'][f'cont_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                cdt_pre_cont = np.nan
-                            
-                            try:
-                                cdt_post_aff = cdt_rows[cdt_rows['treatment_status']=='post'][f'aff_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                cdt_post_aff = np.nan
-                            try:
-                                cdt_post_cont = cdt_rows[cdt_rows['treatment_status']=='post'][f'cont_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                cdt_post_cont = np.nan
-                            
-                            try:
-                                dual_pre_aff = dual_rows[dual_rows['treatment_status']=='pre'][f'aff_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                dual_pre_aff = np.nan
-                            try:
-                                dual_pre_cont = dual_rows[dual_rows['treatment_status']=='pre'][f'cont_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                dual_pre_cont = np.nan
-                            
-                            try:
-                                dual_post_aff = dual_rows[dual_rows['treatment_status']=='post'][f'aff_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                dual_post_aff = np.nan
-                            try:
-                                dual_post_cont = dual_rows[dual_rows['treatment_status']=='post'][f'cont_{tis}_mean_{sig}_{weight_type}weighted'].iloc[-1] #.mean()
-                            except IndexError:
-                                dual_post_cont = np.nan
-                            
-                            
-                            try:
-                                cdt_pre_ids = cdt_rows[cdt_rows['treatment_status']=='pre']['scan_id'].iloc[-1] #.item()
-                            except IndexError:
-                                cdt_pre_ids = None
-                            try:
-                                cdt_post_ids = cdt_rows[cdt_rows['treatment_status']=='post']['scan_id'].iloc[-1] #.item()
-                            except IndexError:
-                                cdt_post_ids = None
-                            try:
-                                dual_pre_ids = dual_rows[dual_rows['treatment_status']=='pre']['scan_id'].iloc[-1] #.item()
-                            except IndexError:
-                                dual_pre_ids = None
-                            try:
-                                dual_post_ids = dual_rows[dual_rows['treatment_status']=='post']['scan_id'].iloc[-1] #.item()
-                            except IndexError:
-                                dual_post_ids = None
-                                
-                            
-                            
-                            cdt_pre_cont_list.append(cdt_pre_cont)
-                            cdt_pre_aff_list.append(cdt_pre_aff)
-                            
-                            cdt_post_cont_list.append(cdt_post_cont)
-                            cdt_post_aff_list.append(cdt_post_aff)
-                            
-                            dual_pre_cont_list.append(dual_pre_cont)
-                            dual_pre_aff_list.append(dual_pre_aff)
-                            
-                            dual_post_cont_list.append(dual_post_cont)
-                            dual_post_aff_list.append(dual_post_aff)  
-                            
-                            cdt_pre_names.append(cdt_pre_ids)
-                            cdt_post_names.append(cdt_post_ids)                        
-                            dual_pre_names.append(dual_pre_ids)
-                            dual_post_names.append(dual_post_ids)
-                            
-                        cdt_pre_cont_list = np.array(cdt_pre_cont_list)
-                        cdt_post_cont_list = np.array(cdt_post_cont_list)
-                        cdt_pre_aff_list = np.array(cdt_pre_aff_list)
-                        cdt_post_aff_list = np.array(cdt_post_aff_list)
-                        
-                        dual_pre_cont_list = np.array(dual_pre_cont_list)
-                        dual_post_cont_list = np.array(dual_post_cont_list)
-                        dual_pre_aff_list = np.array(dual_pre_aff_list)
-                        dual_post_aff_list = np.array(dual_post_aff_list)
-                        
-                        
-                        cdt_aff_change_abs = cdt_pre_aff_list - cdt_post_aff_list
-                        cdt_cont_change_abs = cdt_pre_cont_list - cdt_post_cont_list
-                        
-                        dual_aff_change_abs = dual_pre_aff_list - dual_post_aff_list
-                        dual_cont_change_abs = dual_pre_cont_list - dual_post_cont_list
-                        
-                        #cdt_aff_change_rel = cdt_aff_change_abs / cdt_pre_aff_list
-                        #cdt_cont_change_rel = cdt_cont_change_abs / cdt_pre_cont_list
-                        
-                        #dual_aff_change_rel = dual_aff_change_abs / dual_pre_aff_list
-                        #dual_cont_change_rel = dual_cont_change_abs / dual_pre_cont_list
-                        
-                        response_df[f'cdt_pre_names'] = cdt_pre_names
-                        response_df[f'cdt_post_names'] = cdt_post_names
-                        response_df[f'dual_pre_names'] = dual_pre_names
-                        response_df[f'dual_post_names'] = dual_post_names
-                        
-                        
-                        response_df[f'cdt_pre_cont_signal_{tis}_{sig}_{weight_type}weighted'] = cdt_pre_cont_list
-                        response_df[f'cdt_post_cont_signal_{tis}_{sig}_{weight_type}weighted'] = cdt_post_cont_list
-                        response_df[f'cdt_delta_cont_signal_{tis}_{sig}_{weight_type}weighted'] = cdt_cont_change_abs
-                        #response_df[f'cdt_relative_delta_cont_signal_{tis}_{sig}'] = cdt_cont_change_rel
-                        response_df[f'cdt_pre_aff_signal_{tis}_{sig}_{weight_type}weighted'] = cdt_pre_aff_list
-                        response_df[f'cdt_post_aff_signal_{tis}_{sig}_{weight_type}weighted'] = cdt_post_aff_list
-                        response_df[f'cdt_delta_aff_signal_{tis}_{sig}_{weight_type}weighted'] = cdt_aff_change_abs
-                        #response_df[f'cdt_relative_delta_aff_signal_{tis}_{sig}'] = cdt_aff_change_rel
-                        
-                        response_df[f'dual_pre_cont_signal_{tis}_{sig}_{weight_type}weighted'] = dual_pre_cont_list
-                        response_df[f'dual_post_cont_signal_{tis}_{sig}_{weight_type}weighted'] = dual_post_cont_list
-                        response_df[f'dual_delta_cont_signal_{tis}_{sig}_{weight_type}weighted'] = dual_cont_change_abs
-                        #response_df[f'dual_relative_delta_cont_signal_{tis}_{sig}'] = dual_cont_change_rel
-                        response_df[f'dual_pre_aff_signal_{tis}_{sig}_{weight_type}weighted'] = dual_pre_aff_list
-                        response_df[f'dual_post_aff_signal_{tis}_{sig}_{weight_type}weighted'] = dual_post_aff_list
-                        response_df[f'dual_delta_aff_signal_{tis}_{sig}_{weight_type}weighted'] = dual_aff_change_abs
-                        #response_df[f'dual_relative_delta_aff_signal_{tis}_{sig}'] = dual_aff_change_rel
-                        
-                        
-                        labels = ['CDT alone', 'CDT + LT']
-                        affs = [cdt_aff_change_abs, dual_aff_change_abs]
-                        conts = [cdt_cont_change_abs, dual_cont_change_abs]
-                        
-                        scan_names = [list(zip(cdt_pre_names, cdt_post_names)), list(zip(dual_pre_names, dual_post_names))]
-                        
-                        x = np.arange(len(labels))  # the label locations
-                        width = 0.2  # the width of the bars
-                        
-                        fig, ax = plt.subplots(figsize=(8,8))
-                        rects1 = ax.bar(x - width/2, [np.nanmean(i) for i in affs], width, label=f'Affected arm', color=(0,0,0,0), edgecolor='mediumseagreen', yerr=[np.nanstd(i) for i in affs])
-                        rects2 = ax.bar(x + width/2, [np.nanmean(i) for i in conts], width, label=f'Contralateral arm', color=(0,0,0,0), edgecolor='dodgerblue', yerr=[np.nanstd(i) for i in conts])
-                        
-                        data_blob = [affs, conts]
-                        mover = [-width/2, width/2]
-                        colors = ['mediumseagreen', 'dodgerblue']
-                        for the_data, move, co in zip(data_blob, mover, colors):
-                            #print(f'Outer loop: {co}')
-                            # distribute scatter randomly across whole width of bar
-                            for i, name_group in zip(range(len(x)), scan_names):
-                                #print(f'\tInner loop: len is {len(x)}, {len(scan_names)}')
-                                data = the_data[i]
-                                exes = x[i] + np.random.random(data.size) * width*0.7 - width / 2 + move
-                                ax.scatter(exes, data, color=co, alpha=0.5)
-                                
-                                here_mean = np.nanmean(data)
-                                here_std = np.nanstd(data)
-                                here_n = len([i for i in data if not np.isnan(i)])
-                                #print(f'\t\t{[len(i) for i in [exes,data,name_group,study_ids]]}')
-                                for ex,why,namer,sid in zip(exes,data,name_group,study_ids):
-                                    #print(co)
-                                    if np.isnan(why):
-                                        continue
-                                    elif why > here_mean+here_std*1 or why < here_mean-here_std*1:
-                                        ax.annotate(f"{sid}:\n{namer[0]} ->\n{namer[1]}", xy=(ex,why), xytext=(20,20),textcoords="offset points", alpha=0.5, size=4,
-                                            bbox=dict(boxstyle="round", fc="w", alpha=0.5),
-                                            arrowprops=dict(arrowstyle="->"))
-                                    
-                                
-                                #plt.annotate(f'Mean: {round(here_mean,2)}\nn: {here_n}', (x[i]+move, here_mean))
-                        
-                        # Add some text for labels, title and custom x-axis tick labels, etc.
-                        ax.set_ylabel(f'Relative change in {sig.upper()} signal ({weight_type} weighted)')
-                        ax.set_title(f'Paired response in {sig.upper()} signal in {tis} to treatment ({weight_type} weighted)')
-                        ax.set_xticks(x)
-                        ax.set_xticklabels(labels)
-                        ax.legend()
-                        
-                        ax.set_ylim(-0.75,.25)
-                        
-                        ax.plot(ax.get_xlim(),[0,0],c='red')
-                        
-                        #ax.bar_label(rects1, padding=3)
-                        #ax.bar_label(rects2, padding=3)
-                        
-                        fig.tight_layout()
-                        
-                        treatment_response_name = os.path.join(target_aim_folder, f'paired_treatment_response_{sig}_{tis}_{weight_type}weighted.png')
-                        plt.savefig(treatment_response_name, dpi=300)
-                        
-                        plt.close()
-                        
-                        # save a csv of this info
-                        
-                response_csv = os.path.join(target_aim_folder, f'response.csv')
-                response_df.to_csv(response_csv)
+
+###### figs
+if do_figs:
+    
+    processed_folder = os.path.join(master_folder, 'aim5', 'processed')
+    
+    master_node_df = pd.read_excel(master_node_df_outname)
+    node_df_byperson = pd.read_excel(byperson_df_outname)
+    node_df_delta = pd.read_excel(delta_df_outname)
+    
+    arm_types = ['aff', 'cont']
+    weight_types = ['water']
+    temporals = ['initial', 'followup']
+    temporal_colors = ['blue', 'green']
+    
+    delta_figure_folder = os.path.join(figure_folder, 'deltas')
+    if not os.path.exists(delta_figure_folder):
+        os.mkdir(delta_figure_folder)
+        
+    print('figuring')
+    tiks = np.arange(-4, 4.5, step=0.5)
+    tiks = [round(i,1) for i in tiks]
+    
+    plt.rc('xtick', labelsize=6)
+    for at in arm_types:
+        print(f'Arm is {at}')
+        sub_df = node_df_delta[node_df_delta['arm']==at]
+        for wt in weight_types:
+            print(f'\tWeighting is {wt}')
+            sub_sub_df = sub_df[sub_df['weight_type']==wt]
+            for i, row in sub_sub_df.iterrows():
+                print(f'\t\tRow {i+1} of {len(node_df_delta)}')
+                fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(12, 8))
                 
-                # generate response plots
-                def format_axes(fig):
-                    for i, ax in enumerate(fig.axes):
-                        ax.text(0.5, 0.5, "ax%d" % (i+1), va="center", ha="center")
-                        ax.tick_params(labelbottom=False, labelleft=False)
-                for weight_type in weight_types:        
-                    for i,row in response_df.iterrows():
-                        sid = row['study_id']
-                        
-                        plt.rc('xtick', labelsize=5)  
-                        # gridspec inside gridspec
-                        fig = plt.figure(figsize=(20,10))
-                        
-                        gs0 = gridspec.GridSpec(1, 2, figure=fig)
-                        gs00 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs0[0], wspace=.4)
-                        gs01 = gridspec.GridSpecFromSubplotSpec(1, 2, subplot_spec=gs0[1], wspace=.4)
-                        
-                        #gs00 is the contralateral arm
-                        #gs01 is the affected arm
-                        # within gsx, index 0 is CDT, index 1 is CDT + LT
-                        # within CDT or CDT + LT, index 0 is before treatment, index 1 is after
-                        
-                        for g_plot, arm_type, p_col in zip([gs00, gs01], ['cont', 'aff'], ['mediumseagreen', 'steelblue']):
-                            
-                            for j, treat_type in enumerate(['cdt', 'dual']):
-                                subg = gridspec.GridSpecFromSubplotSpec(6, 2, subplot_spec=g_plot[j], hspace=.6)
-                                
-                                
-            
-                                zspec_muscle_axis = fig.add_subplot(subg[0,:])
-                                zspec_fat_axis = fig.add_subplot(subg[1,:])
-                                
-                                zspec_muscle_axis.set_ylim(0,1.2)
-                                zspec_fat_axis.set_ylim(0,1.2)
-                                
-                                zspec_muscle_axis.set_xlim(-4,4)
-                                zspec_fat_axis.set_xlim(-4,4)
-                                
-                                #tiks = np.arange(-4, 4.5, step=0.5)
-                                #tiks = [round(i,1) for i in tiks]
-                                
-                                tiks = np.arange(-5.5, 6, step=0.5)
-                                tiks = [round(i,1) for i in tiks]
-                                
-                                zspec_muscle_axis.set_xticks(tiks)
-                                zspec_fat_axis.set_xticks(tiks)
-                                
-                                zspec_muscle_axis.set_title(f'{arm_type}, {treat_type} (muscle, {weight_type} weighted)')
-                                zspec_fat_axis.set_title(f'{arm_type}, {treat_type} (fat, {weight_type} weighted)')                        
-                                '''
-                                zspec_muscle_axis_uncor = fig.add_subplot(subg[2,:])
-                                zspec_fat_axis_uncor = fig.add_subplot(subg[3,:])
-                                
-                                zspec_muscle_axis_uncor.set_xlim(-5.5,5.5)
-                                zspec_fat_axis_uncor.set_xlim(-5.5,5.5)
-                                
-                                zspec_muscle_axis_uncor.set_xticks(tiks)
-                                zspec_fat_axis_uncor.set_xticks(tiks)
-                                
-                                zspec_muscle_axis_uncor.set_title(f'{arm_type}, {treat_type} (muscle, uncorrected)')
-                                zspec_fat_axis_uncor.set_title(f'{arm_type}, {treat_type} (fat, uncorrected)')
-                                
-                                '''
-                                
-                                
-                                zspec_muscle_axis_uncor_twin = zspec_muscle_axis.twinx()
-                                zspec_fat_axis_uncor_twin = zspec_fat_axis.twinx()
-                                
-                                
-                                
-                                apt_axes = []
-                                noe_axes = []
-                                qc_axes = []
-                                
-                                
-                                #seemap = 'jet'
-                                
-                                seemap = cm.get_cmap('jet', 256)
-                                halfmap = cm.get_cmap('jet', 128)
-                                newcolors = seemap(np.linspace(0, 1, 256))
-                                halfmapcolors = halfmap(np.linspace(0,1,128))
-                                gray = np.array([210/256, 210/256, 210/256, 1])
-                                badcolor = np.array([1, 1, 1, 1])
-                                newcolors[:26, :] = badcolor
-                                newcolors[26:128, :] = gray
-                                newcolors[128:, :] = halfmapcolors
-                                
-                                newcmp = ListedColormap(newcolors)
-                                
-                                
-                                cbar_axis = fig.add_subplot(subg[2,:])
-                                cbar_axis.set_title(f'APT/NOE colorbar')
-                                cbar_axis.set_aspect(0.075)
-                                plt.colorbar(cm.ScalarMappable(norm=None, cmap=newcmp), cax=cbar_axis, orientation='horizontal')
-                                
-                                for (i, state), ls in zip(enumerate(['pre', 'post']), ['solid','dashed']):
-                                    
-                                    scan_id = row[f'{treat_type}_{state}_names']
-                                    
-                                    if scan_id is None:
-                                        continue
-                                    
-                                    big_cest_row = cest_df[cest_df['scan_id']==scan_id].iloc[0]
-                                    shifts = big_cest_row['chemical_shifts_ppm']
-                                    muscle_sigs = big_cest_row[f'muscle_{arm_type}_signals_meannorm_{weight_type}weighted']
-                                    fat_sigs = big_cest_row[f'fat_{arm_type}_signals_meannorm_{weight_type}weighted']
-                                    
-                                    
-                                    
-                                    shifts_uncor = big_cest_row['chemical_shifts_uncor_ppm']
-                                    muscle_sigs_uncor = big_cest_row[f'muscle_{arm_type}_signals_mean_uncor_{weight_type}weighted']
-                                    fat_sigs_uncor = big_cest_row[f'fat_{arm_type}_signals_mean_uncor_{weight_type}weighted']
-                                    try:
-                                        shifts_uncor = [float(i) for i in shifts_uncor[1:-1].split(', ')]
-                                    except TypeError:
-                                        pass
-                                    
-                                    try:
-                                        muscle_sigs_uncor = [float(i) for i in muscle_sigs_uncor[1:-1].split(', ')]
-                                        zspec_muscle_axis_uncor_twin.plot(shifts_uncor, muscle_sigs_uncor, ls=ls, label=f'{state} (uncorrected)', color='red', alpha=0.2)
-                                    except TypeError:
-                                        pass
-                                    
-                                    try:
-                                        fat_sigs_uncor = [float(i) for i in fat_sigs_uncor[1:-1].split(', ')]
-                                        zspec_fat_axis_uncor_twin.plot(shifts_uncor, fat_sigs_uncor, ls=ls, label=f'{state} (uncorrected)', color='red', alpha=0.2)
-                                    except:
-                                        pass
-                                    
-                                    
-                                    
-                                    try:
-                                        shifts = [float(i) for i in shifts[1:-1].split(', ')]
-                                    except TypeError:
-                                        pass
-                                    
-                                    try:
-                                        muscle_sigs = [float(i) for i in muscle_sigs[1:-1].split(', ')]
-                                        zspec_muscle_axis.plot(shifts, muscle_sigs, ls=ls, label=state, color=p_col)
-                                    except TypeError:
-                                        pass
-                                    
-                                    try:
-                                        fat_sigs = [float(i) for i in fat_sigs[1:-1].split(', ')]
-                                        zspec_fat_axis.plot(shifts, fat_sigs, ls=ls, label=state, color=p_col)
-                                    except:
-                                        pass
-                                    
-                                    zspec_muscle_axis.legend()
-                                    zspec_fat_axis.legend()
-                                    
-                                    #zspec_muscle_axis_uncor_twin.legend()
-                                    #zspec_fat_axis_uncor_twin.legend()
-                                    
-                                    zspec_muscle_axis.set_xlabel('Chemical shift (ppm)')
-                                    zspec_muscle_axis.set_ylabel('Normalized signal')
-                                    
-                                    zspec_fat_axis.set_xlabel('Chemical shift (ppm)')
-                                    zspec_fat_axis.set_ylabel('Normalized signal')
-                                    
-                                    '''
-                                    zspec_muscle_axis_uncor.legend()
-                                    zspec_fat_axis_uncor.legend()
-                                    
-                                    zspec_muscle_axis_uncor.set_xlabel('Chemical shift (ppm)')
-                                    zspec_muscle_axis_uncor.set_ylabel('Raw signal')
-                                    
-                                    zspec_fat_axis_uncor.set_xlabel('Chemical shift (ppm)')
-                                    zspec_fat_axis_uncor.set_ylabel('Raw signal')
-                                    '''
-                                    
-                                    '''
-                                    apt_left_ex = -3.7
-                                    apt_right_ex = -3.4
-                                    
-                                    noe_left_ex = 3.4
-                                    noe_right_ex = 3.7
-                                    
-                                    line_whys = [0, 1]
-                                    
-                                    for ex in [apt_left_ex, apt_right_ex, noe_left_ex, noe_right_ex]:
-                                        zspec_muscle_axis.plot([ex, ex], line_whys, color='black')
-                                        zspec_fat_axis.plot([ex, ex], line_whys, color='black')
-                                    '''
-                                    
-                                    fol = os.path.join(master_folder, 'aim3', 'processed', f'{scan_id}_cestdixon_{arm_type}')
-                                                    
-                                    water_image = os.path.join(fol, f'{scan_id}_cestdixon_{arm_type}_C1_.nii.gz')
-                                    fat_image = os.path.join(fol, f'{scan_id}_cestdixon_{arm_type}_C4_.nii.gz')
-                                    apt_image = os.path.join(fol, f'{scan_id}_cestdixon_{arm_type}OCEST_APT_{weight_type}.nii.gz')
-                                    noe_image = os.path.join(fol, f'{scan_id}_cestdixon_{arm_type}OCEST_OPPAPT_{weight_type}.nii.gz')
-                                    s0_image = os.path.join(fol, f'{scan_id}_cestdixon_{arm_type}OCEST_S0_{weight_type}.nii.gz')
-                                    fatmask_image = os.path.join(fol, f'{scan_id}_cestdixon_{arm_type}_fatmask.nii.gz')
-                                    watermask_image = os.path.join(fol, f'{scan_id}_cestdixon_{arm_type}_musclemask.nii.gz')
-                                    
-                                    try:
-                                        s0_image_loaded = nib.load(s0_image)
-                                        s0_image_data = s0_image_loaded.get_fdata()
-                                        s0_image_data = np.where(np.isclose(s0_image_data,0), np.nan, s0_image_data)
-                                    except FileNotFoundError:
-                                        pass
-                                    
-                                    try:
-                                        apt_axis = fig.add_subplot(subg[3,i])
-                                        apt_axis.set_title(f'APT ({state})')
-                                        apt_axis.set_axis_off()
-                                        apt_axis.set_aspect('equal')
-                                        apt_image_loaded = nib.load(apt_image)
-                                        apt_image_data = apt_image_loaded.get_fdata() / s0_image_data
-                                        apt_slice = apt_image_data[:,:,5]
-                                        apt_axis.imshow(apt_slice, vmin=0, vmax=1, cmap=newcmp)
-                                    except FileNotFoundError:
-                                        pass
-                                    
-                                    try:              
-                                        noe_axis = fig.add_subplot(subg[4,i])
-                                        noe_axis.set_title(f'NOE ({state})')
-                                        noe_axis.set_axis_off()                            
-                                        noe_axis.set_aspect('equal')
-                                        noe_image_loaded = nib.load(noe_image)
-                                        noe_image_data = noe_image_loaded.get_fdata() / s0_image_data
-                                        noe_slice = noe_image_data[:,:,5]
-                                        noe_axis.imshow(noe_slice, vmin=0, vmax=1, cmap=newcmp)
-                                    except FileNotFoundError:
-                                        pass
-            
-                                    try:
-                                        qc_axis = fig.add_subplot(subg[5,i])
-                                        qc_axis.set_title(f'QC ({state})\n{scan_id}')
-                                        qc_axis.set_axis_off()
-                                        qc_axis.set_aspect('equal')
-                                        water_image_loaded = nib.load(water_image)
-                                        water_image_data = water_image_loaded.get_fdata()
-                                        water_image_data = np.mean(water_image_data, 3) # time average
-                                        water_slice = water_image_data[:,:,5]
-                                        qc_axis.imshow(water_slice, cmap='gray')
-                                        
-                                        fatmask_loaded = nib.load(fatmask_image)
-                                        fatmask_data = fatmask_loaded.get_fdata()
-                                        fatmask_slice = fatmask_data[:,:,5]
-                                        
-                                        m_fat = np.ma.masked_where(fatmask_slice != 1, fatmask_slice)
-                                        qc_axis.imshow(m_fat, cmap='Greens', interpolation='nearest', alpha=0.5, vmin=0, vmax=2)
-                                        
-                                        water_image_loaded = nib.load(watermask_image)
-                                        water_image_data = water_image_loaded.get_fdata()
-                                        
-                                        watermask_loaded = nib.load(watermask_image)
-                                        watermask_data = watermask_loaded.get_fdata()
-                                        watermask_slice = watermask_data[:,:,5]
-                                        
-                                        m_water = np.ma.masked_where(watermask_slice != 1, watermask_slice)
-                                        qc_axis.imshow(m_water, cmap='Reds', interpolation='nearest', alpha=0.5, vmin=0, vmax=2)
-                                    except FileNotFoundError:
-                                        pass
-                                    
-                                    
-                        
-                        
-                        plt.tight_layout()
-                        
-                        
-                        tracking_figure = os.path.join(target_aim_folder, f'tracking_{sid}_{weight_type}weighted.png')
-                        plt.savefig(tracking_figure, dpi=300)
-                        
-                        plt.close()
-                        #plt.show()
-                        #sys.exit()
-                        
-            
+                is_control = row['control']
+                if is_control:
+                    ct = 'control'
+                else:
+                    ct = 'hiv'
                     
-                    '''
-                    ## pre/post bar plot
-                    cdt_group = sub_df[sub_df['treatment_type'] == 'cdt_alone']
-                    dual_group = sub_df[sub_df['treatment_type'] == 'cdt_and_lt']
-                    
-                    cdt_pre = cdt_group[cdt_group['treatment_status'] == 'pre']
-                    cdt_post = cdt_group[cdt_group['treatment_status'] == 'post']
-                    
-                    dual_pre = dual_group[dual_group['treatment_status'] == 'pre']
-                    dual_post = dual_group[dual_group['treatment_status'] == 'post']
-            
-                    for tis in tissue_types:
-                        for sig in sig_types:
-                            
-                            cdt_pre_sigs_aff = np.array(cdt_pre[f'aff_{tis}_mean_{sig}'])
-                            n_cdt_pre_sigs_aff = np.count_nonzero(~np.isnan(cdt_pre_sigs_aff))
-                            cdt_pre_sigs_aff_mean = np.nanmean(cdt_pre_sigs_aff)
-                            cdt_pre_sigs_aff_std = np.nanstd(cdt_pre_sigs_aff)
-                            
-                            cdt_pre_sigs_cont = np.array(cdt_pre[f'cont_{tis}_mean_{sig}'])
-                            n_cdt_pre_sigs_cont = np.count_nonzero(~np.isnan(cdt_pre_sigs_cont))
-                            cdt_pre_sigs_cont_mean = np.nanmean(cdt_pre_sigs_cont)
-                            cdt_pre_sigs_cont_std = np.nanstd(cdt_pre_sigs_cont)
-                            
-            
-                            dual_pre_sigs_aff = np.array(dual_pre[f'aff_{tis}_mean_{sig}'])
-                            n_dual_pre_sigs_aff = np.count_nonzero(~np.isnan(dual_pre_sigs_aff))
-                            dual_pre_sigs_aff_mean = np.nanmean(dual_pre_sigs_aff)
-                            dual_pre_sigs_aff_std = np.nanstd(dual_pre_sigs_aff)
-                            
-                            dual_pre_sigs_cont = np.array(dual_pre[f'cont_{tis}_mean_{sig}'])
-                            n_dual_pre_sigs_cont = np.count_nonzero(~np.isnan(dual_pre_sigs_cont))
-                            dual_pre_sigs_cont_mean = np.nanmean(dual_pre_sigs_cont)
-                            dual_pre_sigs_cont_std = np.nanstd(dual_pre_sigs_cont)
-                            
-                            
-                            
-                            
-                            
-                            cdt_post_sigs_aff = np.array(cdt_post[f'aff_{tis}_mean_{sig}'])
-                            n_cdt_post_sigs_aff = np.count_nonzero(~np.isnan(cdt_post_sigs_aff))
-                            cdt_post_sigs_aff_mean = np.nanmean(cdt_post_sigs_aff)
-                            cdt_post_sigs_aff_std = np.nanstd(cdt_post_sigs_aff)
-                            
-                            cdt_post_sigs_cont = np.array(cdt_post[f'cont_{tis}_mean_{sig}'])
-                            n_cdt_post_sigs_cont = np.count_nonzero(~np.isnan(cdt_post_sigs_cont))
-                            cdt_post_sigs_cont_mean = np.nanmean(cdt_post_sigs_cont)
-                            cdt_post_sigs_cont_std = np.nanstd(cdt_post_sigs_cont)
-                            
-            
-                            dual_post_sigs_aff = np.array(dual_post[f'aff_{tis}_mean_{sig}'])
-                            n_dual_post_sigs_aff = np.count_nonzero(~np.isnan(dual_post_sigs_aff))
-                            dual_post_sigs_aff_mean = np.nanmean(dual_post_sigs_aff)
-                            dual_post_sigs_aff_std = np.nanstd(dual_post_sigs_aff)
-                            
-                            dual_post_sigs_cont = np.array(dual_post[f'cont_{tis}_mean_{sig}'])
-                            n_dual_post_sigs_cont = np.count_nonzero(~np.isnan(dual_post_sigs_cont))
-                            dual_post_sigs_cont_mean = np.nanmean(dual_post_sigs_cont)
-                            dual_post_sigs_cont_std = np.nanstd(dual_post_sigs_cont)
-                            
-                            
-                            
-                            
-                            
-                            
-                    
-                            labels = ['Pre-intervention', 'Post-intervention']
-                            cdt_aff_means = [cdt_pre_sigs_aff_mean, cdt_post_sigs_aff_mean]
-                            cdt_cont_means = [cdt_pre_sigs_cont_mean, cdt_post_sigs_cont_mean]
-                            
-                            dual_aff_means = [dual_pre_sigs_aff_mean, dual_post_sigs_aff_mean]
-                            dual_cont_means = [dual_pre_sigs_cont_mean, dual_post_sigs_cont_mean]
-                            
-                            cdt_aff_stds = [cdt_pre_sigs_aff_std, cdt_post_sigs_aff_std]
-                            cdt_cont_stds = [cdt_pre_sigs_cont_std, cdt_post_sigs_cont_std]
-                            
-                            dual_aff_stds = [dual_pre_sigs_aff_std, dual_post_sigs_aff_std]
-                            dual_cont_stds = [dual_pre_sigs_cont_std, dual_post_sigs_cont_std]
-                            
-                            x = np.arange(len(labels))  # the label locations
-                            width = 0.17  # the width of the bars
-                            
-                            fig, ax = plt.subplots(figsize=(8,8))
-                            rects1 = ax.bar(x - 3*width/2 - width*0.05, cdt_aff_means, width, label=f'CDT alone, affected (n={[n_cdt_pre_sigs_aff, n_cdt_post_sigs_aff]})', color='royalblue', yerr=cdt_aff_stds)
-                            rects2 = ax.bar(x - width/2 - width*0.05, cdt_cont_means, width, label=f'CDT alone, contralateral (n={[n_cdt_pre_sigs_cont, n_cdt_post_sigs_cont]})', color='cornflowerblue', yerr=cdt_cont_stds)
-                            rects3 = ax.bar(x + width/2 + width*0.05, dual_aff_means, width, label=f'CDT+LT, affected (n={[n_dual_pre_sigs_aff, n_dual_post_sigs_aff]})', color='indianred', yerr=dual_aff_stds)
-                            rects4 = ax.bar(x + 3*width/2 + width*0.05, dual_cont_means, width, label=f'CDT+LT, contralateral (n={[n_dual_pre_sigs_cont, n_dual_post_sigs_cont]})', color='salmon', yerr=cdt_cont_stds)
-                            
-                            # Add some text for labels, title and custom x-axis tick labels, etc.
-                            ax.set_ylabel(f'Mean {sig.upper()} signal')
-                            ax.set_title(f'Response in {sig.upper()} signal in {tis} to treatment')
-                            ax.set_xticks(x)
-                            ax.set_xticklabels(labels)
-                            #ax.set_ylim(0.95,1.06)
-                            ax.legend()
-                            
-                            #ax.bar_label(rects1, padding=3)
-                            #ax.bar_label(rects2, padding=3)
-                            
-                            fig.tight_layout()
-                            
-                            treatment_response_name = os.path.join(target_aim_folder, f'treatment_response_{sig}_{tis}.png')
-                            plt.savefig(treatment_response_name, dpi=300)
-                            
-                            plt.close()
-            
-                    
-                    '''
-                    
+                delta_apt = row['mean_apt_delta']
+                delta_noe = row['mean_noe_delta']
+                delta_fwhm = row['mean_lorwidth_delta']
                 
-                    """
-                    #time courses
-                    for the_id in study_ids:
-                        target_fig_folder = os.path.join(target_aim_folder, the_id)
-                        if os.path.exists(target_fig_folder):
-                            shutil.rmtree(target_fig_folder)
-                        os.mkdir(target_fig_folder)
+                id_list = []
+                shifts = az.reconvert_nparray_from_string(row['chemical_shifts_ppm'])
+                for tempo, tempo_col in zip(temporals, temporal_colors):
+                    signal = az.reconvert_nparray_from_string(row[f'{tempo}_signals_meannorm'])
+                    lorentz = az.reconvert_nparray_from_string(row[f'{tempo}_lorentzian_sigs'])
+                    the_id = row[f'{tempo}_cest_id']
+                    id_list.append(the_id)
+                    
+                    
+                    axs[0][0].plot(shifts, signal, alpha=0.7, color=tempo_col, label=f'{tempo} signal')
+                    axs[0][0].plot(shifts, lorentz, alpha=0.3, color=tempo_col, label=f'{tempo} lorentzian', ls='dashed')
+                    
+                axs[0][0].set_xlabel('Chemical shift (ppm)')
+                axs[0][0].set_ylabel('Normalized signal (a.u.)')
+                    
+                axs[0][0].legend()
+                axs[0][0].set_title(f'CEST response')
+                axs[0][0].set_xlim(-4,4)
+                axs[0][0].set_ylim(0,1.2)
+    
+                axs[0][0].set_xticks(tiks)
+                
+                delta = az.reconvert_nparray_from_string(row[f'signals_meannorm_delta'])
+                axs[0][1].plot([-10,10], [0,0], alpha=0.7, color='red')
+                axs[0][1].plot(shifts, delta, alpha=0.7, color='black', label=f'Signal delta')
+                
+                axs[0][1].set_xlabel('Chemical shift (ppm)')
+                axs[0][1].set_ylabel('Normalized signal delta (a.u.)')
+                    
+                axs[0][1].legend()
+                
+                axs[0][1].set_title(f'\n\nRelative signal change')
+                axs[0][1].set_xlim(-4,4)
+                axs[0][1].set_ylim(-0.5,0.5)
+                
+                axs[0][1].set_xticks(tiks)
+                
+                for i, tempo in enumerate(temporals):
+                    the_ax = axs[1][i]
+                    cest_id = row[f'{tempo}_cest_id']
+                    n_nodes = row[f'{tempo}_n_nodes']
+                    v_nodes = int(row[f'{tempo}_n_node_voxels'])
+                    
+                    fol = os.path.join(processed_folder, f'{cest_id}_cestdixon_{at}')
+                    water_image = os.path.join(fol, f'{cest_id}_cestdixon_{at}_C1_.nii.gz')
+                    node_image_globber = os.path.join(bulk_folder, 'aim5', cest_id, f'*mask*{at}.nii.gz')
+                    node_image_candidates = glob.glob(node_image_globber)
+                    node_image = node_image_candidates[0]
+            
+                    water_image_loaded = nib.load(water_image)
+                    water_image_data = water_image_loaded.get_fdata()
+                    water_image_data = np.mean(water_image_data, 3) # zspec average
+            
+                    node_image_loaded = nib.load(node_image)
+                    node_image_data = node_image_loaded.get_fdata()
+                    labeled_node_data = morphology.label(node_image_data)
+                    
+                    n_slices = labeled_node_data.shape[2]
+                    n_unique = 0
+                    win_slice = 0
+                    for ix in range(n_slices):
+                        sli = labeled_node_data[:,:,ix]
+                        unique_in_slice = len(np.unique(sli))
+                        if unique_in_slice > n_unique:
+                            n_unique = unique_in_slice
+                            win_slice = ix
+                            
+                    the_ax.imshow(water_image_data[:,:,win_slice], cmap='gray')
+                    the_ax.imshow(node_image_data[:,:,win_slice], cmap='Reds', alpha=0.5)
+                    
+                    the_ax.axis('off')
+                    the_ax.set_title(f'{tempo}: {cest_id}\n{n_nodes} nodes ({n_unique-1} visible), total voxels {v_nodes}')
                         
-                        sub_sub_df = sub_df[sub_df['study_id'] == the_id]
-                        
-                        for sig_name in sig_names:
-                            for roi_n in roi_names:
-                                if (roi_n == 'whole' and sig_name != 'fat_frac') or (roi_n != 'whole' and sig_name == 'fat_frac'):
-                                    continue
-                                prepost = []
-                                treatment = []
-                                scan_ids = []
-                                
-                                means_aff = []
-                                upper_aff = []
-                                lower_aff = []
-                                
-                                means_cont = []
-                                upper_cont = []
-                                lower_cont = []
-                                
-                                for idx, row in sub_sub_df.iterrows():
-                                    
-                                    if row['treatment_status'] == 'pre':
-                                        preposter = 0
-                                    elif row['treatment_status'] == 'post':
-                                        proposter = 1
-                                    else:
-                                        raise Exception
-                                        
-                                    prepost.append(preposter)     
-                                    
-                                    treater = row['treatment_type']
-                                    
-                                    treater = treater.upper()
-                                    treater = treater.replace('_', ' ')
-                                    treater = treater.replace('AND', 'and')
-                                        
-                                    treatment.append(treater)
-                                    
-                                    
-                                    if sig_name != 'fat_frac':
-                                                
-                                        means_aff.append(row[f'aff_{roi_n}_mean_{sig_name}'])
-                                        upper_aff.append(row[f'aff_{roi_n}_mean_{sig_name}'] + row[f'aff_{roi_n}_std_{sig_name}'])
-                                        lower_aff.append(row[f'aff_{roi_n}_mean_{sig_name}'] - row[f'aff_{roi_n}_std_{sig_name}'])
-                                        
-                                        means_cont.append(row[f'cont_{roi_n}_mean_{sig_name}'])
-                                        upper_cont.append(row[f'cont_{roi_n}_mean_{sig_name}'] + row[f'cont_{roi_n}_std_{sig_name}'])
-                                        lower_cont.append(row[f'cont_{roi_n}_mean_{sig_name}'] - row[f'cont_{roi_n}_std_{sig_name}'])
-                                    else:
-                                        means_aff.append(row[f'aff_fat_frac'])
-                                        means_cont.append(row[f'cont_fat_frac'])
-                                    
-                                    scan_ids.append(row['scan_id'])
-                        """
+                            
+                    
+                plt.suptitle(f'{ct}, {at} arm, {wt} weighted\n$\Delta$apt={round(delta_apt,2)}, $\Delta$noe={round(delta_noe,2)}, $\Delta$FWHM={round(delta_fwhm,2)}', fontweight='bold')
+                plt.tight_layout()
+                
+                delta_outname = os.path.join(delta_figure_folder, f'delta_{ct}_{"_to_".join(id_list)}_{wt}weighted_{at}arm.png')
+                fig.savefig(delta_outname, dpi=300)
+    
                     
                 
             

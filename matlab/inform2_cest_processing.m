@@ -26,6 +26,7 @@ preproc_cest=1;
 %basedirs = ["/Users/skyjones/Desktop/cest_processing/data/working/aim4","/Users/skyjones/Desktop/cest_processing/data/working/aim3",...
 %"/Users/skyjones/Desktop/cest_processing/data/working/aim2","/Users/skyjones/Desktop/cest_processing/data/working/aim1"];
 basedirs = ["/Users/skyjones/Desktop/hiv_processing/data/working/aim5"];
+%basedirs = ["/Users/skyjones/Desktop/cest_processing/data/working/aim1"];
 
 %basedirs = ["/Users/skyjones/Desktop/cest_processing/data/working/aim4","/Users/skyjones/Desktop/cest_processing/data/working/aim3",...
 %"/Users/skyjones/Desktop/cest_processing/data/working/aim2","/Users/skyjones/Desktop/cest_processing/data/working/aim1",...
@@ -40,7 +41,8 @@ for kk=1:(size(basedirs,2))
     
     basedir = convertStringsToChars(basedir);
     
-    weight_types = ["water", "fat"];
+    %weight_types = ["water", "fat"];
+    weight_types = ["water"];
 
     mydir = [basedir '/raw'];
     outdir= [basedir '/processed']; % note these are being saved locally
@@ -59,10 +61,11 @@ for kk=1:(size(basedirs,2))
     %save_avw(dd(:,:,1),file2save,'d',[1.8 2 6 7.692]); % path
 
 
-        overwrite = true;
+        overwrite = false;
         the_name = myfiles(ff).name;
         the_split = strsplit(the_name, '_');
         the_num = str2double(the_split{2});
+        the_num_2 = str2double(the_split{3});
 
         if strcmp(the_name, '.DS_Store')
             continue;
@@ -93,7 +96,8 @@ for kk=1:(size(basedirs,2))
             % dynamics = 50;
 
             try
-                if (the_num < 140463 || the_num == 141366) && the_num ~= 139423 % pts after this number use an alternate encoding. I don't know why there are random exceptions
+                if (the_num < 140463 || the_num == 141366) && the_num ~= 139423 && ~(the_num == 139365 && the_num_2 == 2) && ~(the_num == 139285 && the_num_2 == 2) % pts after this number use an alternate encoding. I don't know why there are random exceptions
+                    disp('Standard encoding')
                     cc1=dd(:,:,1:500); % water
                     cc2=dd(:,:,501:1000); % f+w in phase
                     cc3=dd(:,:,1001:1500); % f+w out of phase
@@ -101,6 +105,7 @@ for kk=1:(size(basedirs,2))
                     cc5=dd(:,:,2001:2500); % T2*
                     cc6=dd(:,:,2501:3000); % b0
                 else
+                    disp('Alternate encoding')
                     cc6=dd(:,:,1:500); % interleaved f+w in phase, f+w out of phase, and something that looks like f+w out of phase
                     cc2=dd(:,:,501:1000); % interleaved f+w in phase, f+w out of phase, and something that looks like f+w out of phase
                     cc3=dd(:,:,1001:1500); % interleaved f+w in phase, f+w out of phase, and something that looks like f+w out of phase
@@ -431,12 +436,17 @@ for kk=1:(size(basedirs,2))
 
                     aptleft=[4:8]; % -3.3 to -3.7 ppm; note this is about NOE
                     aptright=[74:78]; % +3.3 to +3.7 ppm; about the APT range
+                    
+                    %truenoe=[6:26]; % -1.5 to -3.5 ppm
+                    truenoe=[11:21]; % -2 to -3 ppm
 
                     % now calculate the CHO (choline). Note this is on the minus end of the spectrum,
                     % and since thisn't flipped to have +ppm on the left yet, the CHO
                     % effect will be on the left side here and it's centered at -1.6 ppm.
                     choleft=[21:29]; % we're averaging -1.2 to -2 ppm here
                     choright=[53:61]; % we're averaging 1.2 to 2 ppm here
+                    
+                    truenoe_cest1_z_b0corrected=mean(cest1_z_b0correct(:,:,:,truenoe),4);
 
                     apt_left_cest1_z_b0corrected=mean(cest1_z_b0correct(:,:,:,aptleft),4); % this is -ppm
                     apt_right_cest1_z_b0corrected=mean(cest1_z_b0correct(:,:,:,aptright),4); % this is +ppm
@@ -459,7 +469,11 @@ for kk=1:(size(basedirs,2))
                     save_avw(b0,strcat(file2save,'OCEST_B0_', weight_txt),'d',[1.8 2 6 7.692]); % path
                     %save_avw(st2(b0),'/Users/mjd/VU/data/3T/inform2/data/Donahue_TEMPID/DICOM/Donahue_TEMPID_CEST_B0','d',[1.8 2 6 7.692]); % path
                     %unix('fslswapdim /Users/mjd/VU/data/3T/inform2/data/Donahue_TEMPID/DICOM/Donahue_TEMPID_CEST_B0.nii.gz -x y z /Users/mjd/VU/data/3T/inform2/data/Donahue_TEMPID/DICOM/Donahue_TEMPID_CEST_B0.nii.gz'); % path
-
+                    
+                    %NOE:
+                    % The mean signal between -1.5 ppm and -3.5ppm (NOE)
+                    save_avw(truenoe_cest1_z_b0corrected,strcat(file2save,'OCEST_NOE_', weight_txt),'d',[1.8 2 6 7.692]); % path
+                    
                     %APT:
                     % The mean signal between -3.3 ppm and -3.7ppm (OPPAPT):
                     save_avw(apt_left_cest1_z_b0corrected,strcat(file2save,'OCEST_OPPAPT_', weight_txt),'d',[1.8 2 6 7.692]); % path

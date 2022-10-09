@@ -6,10 +6,8 @@ import datetime
 import operator
 
 
-bulk_folder = '/Users/skyjones/Desktop/cest_processing/data/bulk/'
-target_folder = '/Users/skyjones/Desktop/cest_processing/data/working/'
-
-form = 'lymph' # hiv or lymph
+bulk_folder = '/Users/skyjones/Desktop/hiv_processing/data/bulk/'
+target_folder = '/Users/skyjones/Desktop/hiv_processing/data/working/'
 
 
 
@@ -18,13 +16,18 @@ form = 'lymph' # hiv or lymph
 
 
 
-bulkers = glob.glob(os.path.join(bulk_folder, '*'))
+bulkers = glob.glob(os.path.join(bulk_folder, '*/'))
 log_txt = ''
 map_txt = ''
 
 for bulkf in bulkers:
     
-    aim_folder = bulkf.split('/')[-1]
+        
+    aim_folder = os.path.basename(os.path.normpath(bulkf))
+    
+    raw_fol = os.path.join(target_folder, aim_folder, f'raw')
+    if not os.path.exists(raw_fol):
+        os.mkdir(raw_fol)
     
     print(f'-----On {aim_folder}-----')
     
@@ -37,27 +40,20 @@ for bulkf in bulkers:
         files = [f.name for f in os.scandir(dicom_folder)]
         
         
-        arms = ['aff', 'cont']
+        arms = ['ipsi', 'cont']
         
-        if form == 'lymph':
-            arms_n = arms.copy()
-        elif form == 'hiv':
-            arms_n = ['ipsi', 'cont']
-        
-        for arm, arm_n in zip(arms, arms_n):
+        for arm in arms:
             
-            if arm == 'cont' and aim_folder == 'aim1':
-                continue
         
-            if arm == 'aff':
-                cestdixon_searcher = [f for f in files if ('cest' in f.lower() and 'cont' not in f.lower() and 'unaff' not in f.lower() and 'b1' not in f.lower() and 'low' not in f.lower())]
+            if arm == 'ipsi':
+                cestdixon_searcher = [f for f in files if ('cest' in f.lower() and ('cont' not in f.lower() and 'unaff' not in f.lower()) and 'b1' not in f.lower() and 'low' not in f.lower())]
             elif arm == 'cont':
                 cestdixon_searcher = [f for f in files if ('cest' in f.lower() and ('cont' in f.lower() or 'unaff' in f.lower()) and 'b1' not in f.lower() and 'low' not in f.lower())]
                 
             if len(cestdixon_searcher) == 1:
                 cestdixon_root = cestdixon_searcher[0]
                 cestdixon_file = os.path.join(dicom_folder, cestdixon_root)
-                cestdixon_newname = os.path.join(target_folder, aim_folder, 'raw', f'{pt_id}_cestdixon_{arm}.DCM')
+                cestdixon_newname = os.path.join(raw_fol, f'{pt_id}_cestdixon_{arm}.DCM')
                 shutil.copy(cestdixon_file, cestdixon_newname)
                 
                 map_txt = map_txt + f'\n{aim_folder}, {pt_id}, {arm}, {cestdixon_root}'
@@ -73,7 +69,7 @@ for bulkf in bulkers:
                     addon = f' (index {min_index} selected)'
                     cestdixon_root = cestdixon_searcher[min_index]
                     cestdixon_file = os.path.join(dicom_folder, cestdixon_root)
-                    cestdixon_newname = os.path.join(target_folder, aim_folder, 'raw', f'{pt_id}_cestdixon_{arm}.DCM')
+                    cestdixon_newname = os.path.join(raw_fol, f'{pt_id}_cestdixon_{arm}.DCM')
                     shutil.copy(cestdixon_file, cestdixon_newname)
                     
                     map_txt = map_txt + f'\n{aim_folder}, {pt_id}, {arm}, {cestdixon_root}'
@@ -91,7 +87,7 @@ for bulkf in bulkers:
                             addon = f' (index {max_index} selected) [ALTERNATE MATCHING]'
                             cestdixon_root = cestdixon_searcher[max_index]
                             cestdixon_file = os.path.join(dicom_folder, cestdixon_root)
-                            cestdixon_newname = os.path.join(target_folder, aim_folder, 'raw', f'{pt_id}_cestdixon_{arm}.DCM')
+                            cestdixon_newname = os.path.join(raw_fol, f'{pt_id}_cestdixon_{arm}.DCM')
                             shutil.copy(cestdixon_file, cestdixon_newname)
                             
                             map_txt = map_txt + f'\n{aim_folder}, {pt_id}, {arm}, {cestdixon_root}'

@@ -27,6 +27,10 @@ aim2_token_loc = '/Users/skyjones/Documents/repositories/lymph_aim2_token.txt'
 aim3_token_loc = '/Users/skyjones/Documents/repositories/lymph_aim3_token.txt'
 aim4_token_loc = '/Users/skyjones/Documents/repositories/lymph_aim4_token.txt'
 
+comb_adj_col = 'neoadjuvant_or_adjuvant'
+neoadj_col = 'neo_adjuvent_or_adjuvent___1'
+adj_col = 'neo_adjuvent_or_adjuvent___2'
+
 prefix = 'Donahue'
 
 
@@ -48,8 +52,14 @@ aim1_sids = aim1_data['study_id']
 aim1_nodes_removed = aim1_data['number_of_lymph_nodes_remo']
 aim1_nodes_metastatic = aim1_data['number_of_metastatic_lymph']
 aim1_nodes_comments = aim1_data['removal_comments']
+aim1_ages = aim1_data['age1']
+aim1_races = aim1_data['race']
+aim1_sexes = aim1_data['sex']
 #aim1_prefixes = aim1_data['mri_forename']
 aim1_full_ids = [f'{prefix}_{i}' for i in aim1_ids]
+
+aim1_neoadj_therapy = [1 if i=='1' or i=='3' else 0 for i in aim1_data[comb_adj_col]]
+aim1_adj_therapy = [1 if i=='2' or i=='3' else 0 for i in aim1_data[comb_adj_col]]
 
 #####
 
@@ -69,10 +79,24 @@ aim2_visits = aim2_data['redcap_event_name']
 aim2_repeats = aim2_data['redcap_repeat_instrument']
 aim2_sids = aim2_data['study_id']
 
+aim2_ages = aim2_data['age12']
+aim2_races = aim2_data['race']
+aim2_sexes = aim2_data['sex']
+
 
 aim2_ids = [i for i, v, r in zip(aim2_ids, aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
 aim2_dates = [i for i, v, r in zip(aim2_dates, aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
 aim2_sids = [i for i, v, r in zip(aim2_sids, aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
+
+
+aim2_races = [i for i, v, r in zip(aim2_races, aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
+aim2_ages = [i for i, v, r in zip(aim2_ages, aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
+aim2_sexes = [i for i, v, r in zip(aim2_sexes, aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
+aim2_neoadj_raw = [i for i, v, r in zip(aim2_data[neoadj_col], aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
+aim2_adj_raw = [i for i, v, r in zip(aim2_data[adj_col], aim2_visits, aim2_repeats) if v == 'visit_1_enrollment_arm_1' and r != 'photographs']
+
+aim2_neoadj_therapy = [1 if i=='1' else 0 for i in aim2_neoadj_raw]
+aim2_adj_therapy = [1 if i=='1' else 0 for i in aim2_adj_raw]
 
 #aim2_prefixes = aim2_data['mri_forename']
 aim2_full_ids = [f'Donahue_{i}' for i in aim2_ids]
@@ -110,6 +134,11 @@ aim3_dashes = aim3_data['dash_work_score']
 aim3_bmi = aim3_data['bmi']
 
 
+aim3_ages = aim3_data['age13']
+aim3_races = aim3_data['race']
+aim3_sexes = aim3_data['sex']
+
+
 aim3_ids_orig = [i.strip('*') for i in aim3_ids]
 aim3_sids = [i.strip('*') for i in aim3_sids]
 
@@ -122,7 +151,16 @@ aim3_uefis = [i for i, v, j in zip(aim3_uefis, aim3_visits, aim3_ids_orig) if ('
 aim3_dashes = [i for i, v, j in zip(aim3_dashes, aim3_visits, aim3_ids_orig) if ('enrollment_arm' in v or 'final_vis' in v) and j != '']
 aim3_bmi = [i for i, v, j in zip(aim3_bmi, aim3_visits, aim3_ids_orig) if ('enrollment_arm' in v or 'final_vis' in v) and j != '']
 
+aim3_ages = [i for i, v, j in zip(aim3_ages, aim3_visits, aim3_ids_orig) if ('enrollment_arm' in v or 'final_vis' in v) and j != '']
+aim3_races = [i for i, v, j in zip(aim3_races, aim3_visits, aim3_ids_orig) if ('enrollment_arm' in v or 'final_vis' in v) and j != '']
+aim3_sexes = [i for i, v, j in zip(aim3_sexes, aim3_visits, aim3_ids_orig) if ('enrollment_arm' in v or 'final_vis' in v) and j != '']
+
+
 aim3_visits = [i for i, v, j in zip(aim3_visits, aim3_visits, aim3_ids_orig) if ('enrollment_arm' in v or 'final_vis' in v) and j != '']
+
+
+aim3_neoadj_therapy = [1 if i=='1' and ('enrollment_arm' in v or 'final_vis' in v) and j != '' else 0 for i, v, j in zip(aim3_data[neoadj_col], aim3_visits, aim3_ids_orig)]
+aim3_adj_therapy = [1 if i=='1' and ('enrollment_arm' in v or 'final_vis' in v) and j != '' else 0 for i, v, j in zip(aim3_data[adj_col], aim3_visits, aim3_ids_orig)]
 
 arm3_treatment_type = [treatment_dict[i][0] for i in aim3_visits]
 arm3_treatment_status = [treatment_dict[i][1] for i in aim3_visits]
@@ -130,7 +168,6 @@ arm3_treatment_order = [treatment_dict[i][2] for i in aim3_visits]
 
 #aim3_prefixes = aim3_data['mri_forename']
 aim3_full_ids = [f'Donahue_{i}' for i in aim3_ids]
-
 
 ####
 
@@ -143,12 +180,21 @@ aim4_data = pd.DataFrame(aim4_data_raw)
 
 aim4_data = aim4_data.drop(aim4_data[aim4_data['mri_scan_id1'] == ''].index)
 
+
+aim4_ages = aim4_data['age1']
+aim4_races = aim4_data['race']
+aim4_sexes = aim4_data['sex']
+
 aim4_ids = aim4_data['mri_scan_id1']
 aim4_dates = aim4_data['study_date']
 aim4_sids = aim4_data['study_id']
 
 #aim4_prefixes = aim4_data['mri_forename']
 aim4_full_ids = [f'{prefix}_{i}' for i in aim4_ids]
+
+
+aim4_neoadj_therapy = [1 if i=='1' or i=='3' else 0 for i in aim4_data[comb_adj_col]]
+aim4_adj_therapy = [1 if i=='2' or i=='3' else 0 for i in aim4_data[comb_adj_col]]
 
 
 ####
@@ -163,7 +209,27 @@ for i in [aim1_dates, aim2_dates, aim3_dates, aim4_dates]:
     
 all_sids = []
 for i in [aim1_sids, aim2_sids, aim3_sids, aim4_sids]:
-    all_sids.extend(i)    
+    all_sids.extend(i)       
+    
+all_ages = []
+for i in [aim1_ages, aim2_ages, aim3_ages, aim4_ages]:
+    all_ages.extend(i)      
+    
+all_races = []
+for i in [aim1_races, aim2_races, aim3_races, aim4_races]:
+    all_races.extend(i)      
+    
+all_sexes = []
+for i in [aim1_sexes, aim2_sexes, aim3_sexes, aim4_sexes]:
+    all_sexes.extend(i) 
+    
+all_adj_therapy = []
+for i in [aim1_adj_therapy, aim2_adj_therapy, aim3_adj_therapy, aim4_adj_therapy]:
+    all_adj_therapy.extend(i)
+    
+all_neoadj_therapy = []
+for i in [aim1_neoadj_therapy, aim2_neoadj_therapy, aim3_neoadj_therapy, aim4_neoadj_therapy]:
+    all_neoadj_therapy.extend(i)
     
 all_aims = []
 for j in [[1 for i in aim1_full_ids], [2 for i in aim2_full_ids], [3 for i in aim3_full_ids], [4 for i in aim4_full_ids]]:
@@ -218,6 +284,9 @@ check_df = pd.DataFrame()
 check_df['scan_id'] = all_full_ids
 check_df['study_id'] = all_sids
 check_df['scan_date'] = all_dates
+check_df['age'] = all_ages
+check_df['race'] = all_races
+check_df['sex'] = all_sexes
 check_df['aim'] = all_aims
 check_df['n_nodes_removed'] = all_nodes_removed
 check_df['n_nodes_metastatic'] = all_nodes_metastatic
@@ -230,6 +299,8 @@ check_df['psfs'] = all_psfs
 check_df['uefi'] = all_uefi
 check_df['dash'] = all_dash
 check_df['bmi'] = all_bmi
+check_df['adj_therapy'] = all_adj_therapy
+check_df['neoadj_therapy'] = all_neoadj_therapy
 
 
 
