@@ -1,30 +1,11 @@
 #!/usr/bin/env python3
 
-import os
-import glob
-import shutil
-import datetime
-import operator
-import sys
-import copy
-
-import scipy
-import nibabel as nib
-import matplotlib as mpl
-import matplotlib.pyplot as plt
-import pandas as pd
 import numpy as np
 from skimage.filters import threshold_otsu
 from skimage import morphology
 from skimage import feature
-from matplotlib import ticker
-import cv2
 from skimage import measure
 from scipy.ndimage.morphology import binary_fill_holes
-from matplotlib.colors import LightSource
-import matplotlib.gridspec as gridspec
-from matplotlib import cm
-from matplotlib.colors import ListedColormap, LinearSegmentedColormap
 
 def segment_muscle_and_fat(water_image_data, fat_image_data,
                            min_shape_area=100, min_edge_length=20, n_erode_muscle=1,
